@@ -1,0 +1,41 @@
+@inject AuditFlowService Flows
+@inject NavigationManager Nav
+
+<div class="flow-header">
+    <div>
+        <h1><Icon Name="cloudcheck" Size="26" /> Subscription audit</h1>
+        <p class="muted">A read-only review of the selected subscriptions against Microsoft's best practices: Compute, Networking, Security, Storage, Microsoft Entra ID, and Identity and Access Management, each graded A–F.</p>
+    </div>
+</div>
+
+<StepBar Current="@CurrentStep" HasScan="@State.HasScan" />
+
+@switch (CurrentStep)
+{
+    case "grades":
+        <GradesStep />
+        break;
+    case "plan":
+        <PlanStep />
+        break;
+    default:
+        <ScopeStep OnScanCompleted="StateHasChanged" />
+        break;
+}
+
+@code {
+    [Parameter] public string? Step { get; set; }
+
+    private SessionState State => Flows.State;
+
+    private string CurrentStep
+    {
+        get
+        {
+            var requested = (Step ?? "scope").ToLowerInvariant();
+            // Steps that need a scan fall back to scope when there is none (e.g. after a refresh).
+            if (requested is "grades" or "plan" && !State.HasScan) return "scope";
+            return requested is "grades" or "plan" ? requested : "scope";
+        }
+    }
+}

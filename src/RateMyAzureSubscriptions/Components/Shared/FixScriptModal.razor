@@ -1,0 +1,36 @@
+@inject IJSRuntime JS
+
+<Modal Visible="_visible" Title="@($"Fix script — {_finding?.Category}")" Wide="true" OnClose="Close">
+    @if (_finding is not null)
+    {
+        <p class="small"><b>@_finding.ResourceName</b> · @_finding.Message</p>
+        <p class="small muted">@_finding.Fix</p>
+        <div class="script-wrap">
+            <pre class="script">@_finding.Script</pre>
+            <button class="btn btn-ghost btn-sm copy" @onclick="CopyAsync"><Icon Name="@(_copied ? "check" : "copy")" Size="14" /> @(_copied ? "Copied" : "Copy")</button>
+        </div>
+        <p class="small muted">Azure CLI, runnable from PowerShell or bash. Replace any &lt;placeholders&gt;, review the effect, and run it in your own session. RateMyAzureSubscriptions itself never modifies Azure.</p>
+    }
+</Modal>
+
+@code {
+    private bool _visible;
+    private bool _copied;
+    private AuditFinding? _finding;
+
+    public void Open(AuditFinding finding)
+    {
+        _finding = finding;
+        _copied = false;
+        _visible = true;
+        StateHasChanged();
+    }
+
+    private void Close() { _visible = false; _finding = null; }
+
+    private async Task CopyAsync()
+    {
+        if (_finding?.Script is null) return;
+        _copied = await JS.InvokeAsync<bool>("rmas.copy", _finding.Script);
+    }
+}

@@ -1,0 +1,56 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Nav
+@inject SessionState State
+@inject AuditFlowService Flows
+@inject IJSRuntime JS
+
+<header class="topbar">
+    <div class="topbar-inner">
+        <a class="brand" href="/">
+            <Icon Name="cloudcheck" Size="26" />
+            <span>Rate<b>My</b>AzureSubscriptions</span>
+        </a>
+        <nav class="flow-tabs">
+            <a class="flow-tab @(IsActive("audit") ? "active" : "")" href="/audit">
+                <Icon Name="cloudcheck" Size="16" /> Subscription audit
+            </a>
+            <a class="flow-tab @(IsActive("model") ? "active" : "")" href="/model">
+                <Icon Name="info" Size="16" /> Scoring model
+            </a>
+        </nav>
+        <div class="topbar-right">
+            @if (State.DemoMode)
+            {
+                <button class="pill pill-demo" title="Sample data is shown. Click to switch back to Azure." @onclick="LeaveDemo">Sample data</button>
+            }
+            <button class="icon-btn" title="Toggle light / dark" onclick="rmas.toggleTheme()">
+                <Icon Name="theme" Size="18" />
+            </button>
+        </div>
+    </div>
+</header>
+
+<main class="page">
+    @Body
+</main>
+
+<footer class="footer">
+    Read-only assessment: RateMyAzureSubscriptions never changes an Azure or Microsoft Entra resource. Each of the six areas is scored on its own 100-point scale with hard caps, following Microsoft's best-practice guidance.
+</footer>
+
+<div id="blazor-error-ui" class="blazor-error">
+    Something went wrong on the server. <a href="" class="reload">Reload</a>
+    <a class="dismiss">✕</a>
+</div>
+
+@code {
+    private bool IsActive(string route) =>
+        Nav.ToBaseRelativePath(Nav.Uri).StartsWith(route, StringComparison.OrdinalIgnoreCase);
+
+    private async Task LeaveDemo()
+    {
+        Flows.ExitDemoMode();
+        try { await JS.InvokeVoidAsync("rmas.setItem", "rmas.demo", null); } catch { }
+        Nav.NavigateTo("/", forceLoad: false);
+    }
+}

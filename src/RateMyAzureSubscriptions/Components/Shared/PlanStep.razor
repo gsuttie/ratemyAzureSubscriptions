@@ -1,0 +1,159 @@
+@inject AuditFlowService Flows
+
+@if (Scan is null)
+{
+    <div class="card empty"><p>No scan yet. <a href="/audit">Choose a scope</a> first.</p></div>
+    return;
+}
+
+<div class="results-bar">
+    <span class="muted small">
+        @Scan.Findings.Count finding@(Scan.Findings.Count == 1 ? "" : "s") from @Scan.SubscriptionIds.Count subscription@(Scan.SubscriptionIds.Count == 1 ? "" : "s") · @Scan.CompletedAt.ToString("yyyy-MM-dd HH:mm")
+        @if (Flows.State.DemoMode) { <span class="pill pill-demo sm">sample</span> }
+    </span>
+    <span class="results-actions">
+        <a class="btn btn-ghost btn-sm" href="/audit/grades"><Icon Name="back" Size="14" /> Grades</a>
+        <button class="btn btn-primary btn-sm" @onclick="() => _report.Open(ReportKind.Plan)"><Icon Name="doc" Size="14" /> Improvement plan report</button>
+    </span>
+</div>
+
+<section class="card overall">
+    <div>
+        <h2 class="card-title">Prioritised improvement plan</h2>
+        <p class="muted small">
+            Every finding, grouped by priority: P1 is High severity (fix first), P2 Medium (fix soon), P3 Low (worth doing).
+            Within a priority, low-effort items come first so quick wins are visible. Recommendations are advisory — validate them against business
+            requirements and operational impact before implementing.
+        </p>
+    </div>
+    <div class="stat-tiles">
+        @foreach (var p in new[] { 1, 2, 3 })
+        {
+            var n = Scan.Findings.Count(f => f.Priority == p);
+            <div class="stat"><span class="stat-num @(p == 1 && n > 0 ? "bad" : p == 2 && n > 0 ? "warn" : "")">@n</span><span class="stat-lbl">P@p · @AuditReportService.PriorityLabel(p)</span></div>
+        }
+        <div class="stat"><span class="stat-num ok">@Scan.Findings.Count(f => f.Effort == "Low")</span><span class="stat-lbl">Quick wins (low effort)</span></div>
+    </div>
+</section>
+
+<SeverityFilter Findings="Scan.Findings" OnChanged="StateHasChanged" />
+
+<div class="class-filter chips">
+    <button class="chip chip-btn @(_area is null ? "active" : "")" @onclick="() => _area = null">All areas <span class="count">@Scan.Findings.Count</span></button>
+    @foreach (var area in AuditAreaExtensions.All)
+    {
+        var n = Scan.FindingsFor(area).Count();
+        if (n == 0) continue;
+        <button class="chip chip-btn @(_area == area ? "active" : "")" @onclick="() => _area = area"><Icon Name="@area.Icon()" Size="12" /> @area.ShortLabel() <span class="count">@n</span></button>
+    }
+</div>
+
+@foreach (var p in new[] { 1, 2, 3 })
+{
+    var items = Filtered.Where(f => f.Priority == p)
+        .OrderBy(f => AuditRatingService.EffortOrder(f.Effort)).ThenBy(f => f.Area).ThenBy(f => f.Category).ThenBy(f => f.ResourceName, StringComparer.OrdinalIgnoreCase).ToList();
+    <section class="card">
+        <div class="card-head">
+            <h2 class="card-title"><span class="sev @SevClass(p)">P@p</span> @AuditReportService.PriorityLabel(p) <span class="count">@items.Count</span></h2>
+            <span class="muted small">@(p == 1 ? "Exposures and missing safeguards" : p == 2 ? "Hardening and resilience gaps" : "Hygiene and cost optimisation")</span>
+        </div>
+        @if (items.Count == 0)
+        {
+            <p class="ok small"><Icon Name="check" Size="14" /> Nothing at this priority.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="table plan">
+                    <thead><tr><th>Effort</th><th>Area</th><th>Action</th><th>Resource</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var group in items.GroupBy(f => (f.Area, f.Category, f.Effort)))
+                        {
+                            var key = $"{p}|{group.Key.Area}|{group.Key.Category}";
+                            var open = _open.Contains(key);
+                            var first = group.First();
+                            <tr class="policy-row @(open ? "open" : "")" @onclick="() => Toggle(key)">
+                                <td><span class="badge @EffortClass(first.Effort)">@first.Effort</span></td>
+                                <td class="small"><Icon Name="@first.Area.Icon()" Size="12" Class="muted" /> @first.Area.ShortLabel()</td>
+                                <td><b>@first.Category</b><div class="small muted">@first.Fix</div></td>
+                                <td class="small">@(group.Count() == 1 ? first.ResourceName : $"{group.Count()} resources")</td>
+                                <td><Icon Name="@(open ? "down" : "chevron")" Size="16" Class="muted" /></td>
+                            </tr>
+                            @if (open)
+                            {
+                                <tr class="policy-detail-row"><td colspan="5">
+                                    <ul class="findings">
+                                        @foreach (var f in group)
+                                        {
+                                            <li>
+                                                <div class="finding-main">
+                                                    <span class="finding-msg">@f.Message</span>
+                                                    <span class="muted small">@f.ResourceName · @Flows.SubscriptionName(f.SubscriptionId)</span>
+                                                </div>
+                                                <span class="finding-actions">
+                                                    @if (f.Script is not null)
+                                                    {
+                                                        <button class="link small" @onclick="() => _fix.Open(f)"><Icon Name="terminal" Size="12" /> Script</button>
+                                                    }
+                                                </span>
+                                            </li>
+                                        }
+                                    </ul>
+                                </td></tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+<section class="card">
+    <h2 class="card-title">Expected effect on the grades</h2>
+    <p class="muted small">What each area gains as the plan is worked through, largest win first.</p>
+    <div class="detail-grid">
+        @foreach (var r in Scan.Ratings.Where(r => !r.NotAssessed).OrderByDescending(r => r.Grade, StringComparer.Ordinal).ThenBy(r => r.Score))
+        {
+            <div>
+                <h4><GradeBadge Grade="@r.Grade" Small="true" /> @r.Area.Label() · @r.Score/100</h4>
+                @if (r.Improvements.Count == 0)
+                {
+                    <p class="ok small"><Icon Name="check" Size="14" /> Full marks.</p>
+                }
+                else
+                {
+                    <ol class="improvements">
+                        @foreach (var imp in r.Improvements.Take(4))
+                        {
+                            <li><span class="pts">+@imp.PointsGained</span><span>@imp.Action
+                                @if (AuditRatingService.WorstGrade(imp.ResultingGrade, r.Grade) != imp.ResultingGrade)
+                                {
+                                    <b style="color:@AuditRatingService.ColorForGrade(imp.ResultingGrade);"> → @imp.ResultingGrade</b>
+                                }
+                            </span></li>
+                        }
+                    </ol>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+<ReportModal @ref="_report" />
+<FixScriptModal @ref="_fix" />
+
+@code {
+    private ReportModal _report = default!;
+    private FixScriptModal _fix = default!;
+    private AuditArea? _area;
+    private readonly HashSet<string> _open = new(StringComparer.OrdinalIgnoreCase);
+
+    private AuditScanResult? Scan => Flows.State.Scan;
+    private IEnumerable<AuditFinding> Filtered => (Scan is null ? [] : _area is null ? Scan.Findings : Scan.FindingsFor(_area.Value)).Where(Flows.State.IsVisible);
+
+    private void Toggle(string key) { if (!_open.Remove(key)) _open.Add(key); }
+
+    private static string SevClass(int p) => p switch { 1 => "high", 2 => "medium", _ => "info" };
+    private static string EffortClass(string effort) => effort switch { "Low" => "ok", "Medium" => "warn", _ => "bad" };
+}

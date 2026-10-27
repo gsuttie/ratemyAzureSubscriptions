@@ -1,0 +1,9 @@
+@page "/audit"
+@page "/audit/{Step}"
+
+<PageTitle>Subscription audit · RateMyAzureSubscriptions</PageTitle>
+<AuditFlow Step="@Step" />
+
+@code {
+    [Parameter] public string? Step { get; set; }
+}

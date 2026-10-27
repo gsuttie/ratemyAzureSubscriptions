@@ -1,0 +1,332 @@
+@inject AuditFlowService Flows
+@inject NavigationManager Nav
+
+@if (Scan is null)
+{
+    <div class="card empty"><p>No scan yet. <a href="/audit">Choose a scope</a> first.</p></div>
+    return;
+}
+
+<div class="results-bar">
+    <span class="muted small">
+        Scanned @Scan.SubscriptionIds.Count subscription@(Scan.SubscriptionIds.Count == 1 ? "" : "s") · @Scan.TotalResources resources · @Scan.CompletedAt.ToString("yyyy-MM-dd HH:mm")
+        @if (Flows.State.DemoMode) { <span class="pill pill-demo sm">sample</span> }
+        @if (!string.IsNullOrEmpty(Scan.ExclusionPatterns))
+        {
+            <span class="chip excl" title="Resources and resource groups whose name contains these words are restore tests and are left out of every review.">excludes @Scan.ExclusionPatterns@(Scan.ExcludedCount > 0 ? $" · {Scan.ExcludedCount} skipped" : "")</span>
+        }
+    </span>
+    <span class="results-actions">
+        @if (Scan.PendingAreas.Any())
+        {
+            <button class="btn btn-ghost btn-sm" @onclick="() => AuditAreasAsync(Scan.PendingAreas.ToList())" disabled="@(_auditing is not null)">
+                <Icon Name="cloudcheck" Size="14" /> Audit remaining @Scan.PendingAreas.Count() area@(Scan.PendingAreas.Count() == 1 ? "" : "s")
+            </button>
+        }
+        <a class="btn btn-ghost btn-sm" href="/audit"><Icon Name="refresh" Size="14" /> Rescan</a>
+        <button class="btn btn-ghost btn-sm" @onclick="() => _report.Open(ReportKind.Summary)"><Icon Name="doc" Size="14" /> Summary report</button>
+        <button class="btn btn-ghost btn-sm" @onclick="() => _report.Open(ReportKind.Findings)"><Icon Name="doc" Size="14" /> Detailed report</button>
+        <a class="btn btn-primary btn-sm" href="/audit/plan"><Icon Name="bolt" Size="14" /> Improvement plan</a>
+    </span>
+</div>
+
+@if (_auditError is not null)
+{
+    <div class="notice notice-error"><Icon Name="warn" Size="16" /><div><b>Audit failed.</b><div class="small">@_auditError</div></div></div>
+}
+@foreach (var w in Scan.Warnings.Distinct())
+{
+    <div class="notice notice-warn"><Icon Name="warn" Size="16" /><span class="small">@w</span></div>
+}
+@if (Scan.Issues.Count > 0)
+{
+    <div class="notice notice-info"><Icon Name="info" Size="16" /><span class="small">@Scan.Issues.Count data source@(Scan.Issues.Count == 1 ? "" : "s") could not be read. Each affected area explains why below, with the access it needs and how to grant it.</span></div>
+}
+
+@{
+    var overall = AuditRatingService.OverallGrade(Scan);
+    var worst = AuditRatingService.Worst(Scan.Ratings);
+    var assessed = Scan.Ratings.Count(r => !r.NotAssessed);
+}
+<section class="card overall">
+    <div class="overall-grade">
+        <GradeBadge Grade="@overall" Large="true" />
+        <div>
+            <div class="overall-label" style="color:@AuditRatingService.ColorForGrade(overall);">@AuditRatingService.LabelForGrade(overall).ToUpperInvariant()</div>
+            <div class="muted small">
+                @if (worst is null)
+                {
+                    <span>Nothing could be assessed in the selected subscriptions.</span>
+                }
+                else
+                {
+                    <span>Average @Scan.OverallScore/100 across @assessed assessed area@(assessed == 1 ? "" : "s"). The weakest area is @worst.Area.Label() (@worst.Grade, @worst.Score/100); the overall grade is never more than one band above it.</span>
+                }
+            </div>
+            <button class="link small" @onclick="() => _showLegend = !_showLegend">@(_showLegend ? "Hide" : "Show") the A–F legend</button>
+        </div>
+    </div>
+    <div class="stat-tiles">
+        <div class="stat"><span class="stat-num">@Scan.TotalResources</span><span class="stat-lbl">Resources</span></div>
+        <div class="stat"><span class="stat-num @(High > 0 ? "bad" : "ok")">@High</span><span class="stat-lbl">High findings</span></div>
+        <div class="stat"><span class="stat-num @(Medium > 0 ? "warn" : "ok")">@Medium</span><span class="stat-lbl">Medium findings</span></div>
+        <div class="stat"><span class="stat-num">@Low</span><span class="stat-lbl">Low findings</span></div>
+    </div>
+    @if (_showLegend)
+    {
+        <div class="legend-grid mt">
+            @foreach (var (g, label, desc) in AuditRatingService.Legend)
+            {
+                <div class="legend-row" style="background:@(AuditRatingService.ColorForGrade(g))1A;">
+                    <GradeBadge Grade="@g" Small="true" />
+                    <div><b style="color:@AuditRatingService.ColorForGrade(g);">@label</b><div class="small">@desc</div></div>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<SeverityFilter Findings="Scan.Findings" OnChanged="StateHasChanged" />
+
+<section class="rating-list">
+    @foreach (var r in Scan.Ratings)
+    {
+        var open = _expanded.Contains(r.Area);
+        var allAreaFindings = Scan.FindingsFor(r.Area).ToList();
+        var areaFindings = allAreaFindings.Where(Flows.State.IsVisible).ToList();
+        var hidden = allAreaFindings.Count - areaFindings.Count;
+        <article class="card rating @(open ? "open" : "")">
+            <button class="rating-row" @onclick="() => Toggle(r.Area)" aria-expanded="@open">
+                <GradeBadge Grade="@r.Grade" />
+                <span class="rating-name">
+                    <b><Icon Name="@r.Area.Icon()" Size="16" Class="muted" /> @r.Area.Label()</b>
+                    <span class="chips">
+                        <span class="chip">@r.ScopeSummary</span>
+                        @if (allAreaFindings.Count > 0) { <span class="chip muted">@areaFindings.Count finding@(areaFindings.Count == 1 ? "" : "s")@(hidden > 0 ? $" ({hidden} hidden)" : "")</span> }
+                    </span>
+                </span>
+                <span class="rating-bar"><span style="width:@(r.NotAssessed ? 0 : r.Score)%;background:@AuditRatingService.ColorForGrade(r.Grade);"></span></span>
+                <span class="rating-score">@(r.NotAssessed ? "–" : r.Score.ToString())<span class="muted">/100</span></span>
+                <Icon Name="@(open ? "down" : "chevron")" Size="18" Class="muted" />
+            </button>
+
+            @if (r.NotAssessed && !Scan.AssessedAreas.Contains(r.Area))
+            {
+                <div class="cap pending">
+                    @if (_auditing is not null && _auditing.Contains(r.Area))
+                    {
+                        <span class="spinner sm"></span> <span>Auditing… @_progress</span>
+                    }
+                    else
+                    {
+                        <Icon Name="info" Size="14" /> <span>Not audited yet.</span>
+                        <button class="btn btn-primary btn-sm" @onclick="() => AuditAreasAsync([r.Area])" disabled="@(_auditing is not null)"><Icon Name="cloudcheck" Size="14" /> Audit this area</button>
+                    }
+                </div>
+            }
+            else if (r.NotAssessed)
+            {
+                <div class="cap"><Icon Name="info" Size="14" /> Not assessed: @r.NotAssessedReason</div>
+            }
+            @if (r.Issues.Count > 0)
+            {
+                <div class="issues">
+                    <div class="issues-head"><Icon Name="warn" Size="14" /> @r.Issues.Count source@(r.Issues.Count == 1 ? "" : "s") could not be read — the grade is based on partial data</div>
+                    @foreach (var i in r.Issues)
+                    {
+                        var key = $"{r.Area}|{i.Source}";
+                        var openIssue = _openIssues.Contains(key);
+                        <div class="issue">
+                            <div class="issue-main">
+                                <b>@i.Source</b> <span class="muted">· @i.Reason.</span>
+                                <div class="small">@i.Impact</div>
+                            </div>
+                            <button class="link small" @onclick="() => ToggleIssue(key)">@(openIssue ? "Hide" : "How to fix")</button>
+                            @if (openIssue)
+                            {
+                                <div class="fix issue-fix">
+                                    <Icon Name="bolt" Size="14" />
+                                    <div>
+                                        <div><b>Needs:</b> @i.Needs</div>
+                                        <div class="mt">@i.Fix</div>
+                                        @if (!string.IsNullOrEmpty(i.Detail)) { <div class="small muted mt mono">@i.Detail</div> }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                @if (r.CapReason is not null)
+                {
+                    <div class="cap"><Icon Name="lock" Size="14" /> Grade capped: @r.CapReason</div>
+                }
+                @if (!open && r.Improvements.Count > 0)
+                {
+                    <div class="next-fix"><Icon Name="bolt" Size="14" /> Biggest win: @r.Improvements[0].Action <span class="pts">+@r.Improvements[0].PointsGained</span></div>
+                }
+            }
+
+            @if (open && !r.NotAssessed)
+            {
+                <div class="rating-detail">
+                    <div class="detail-grid">
+                        <div>
+                            <h4>Score breakdown</h4>
+                            <table class="cats">
+                                @foreach (var c in r.Categories)
+                                {
+                                    <tr>
+                                        <td class="cat-name">@c.Name</td>
+                                        <td class="cat-bar"><span><span style="width:@(c.Possible == 0 ? 0 : c.Earned * 100 / c.Possible)%;" class="@(c.Earned == c.Possible ? "full" : c.Earned == 0 ? "none" : "")"></span></span></td>
+                                        <td class="cat-score @(c.Earned == c.Possible ? "ok" : c.Earned == 0 ? "bad" : "")">@c.Earned<span class="muted">/@c.Possible</span></td>
+                                        <td class="cat-notes muted">@string.Join(" ", c.Details)</td>
+                                    </tr>
+                                }
+                            </table>
+                        </div>
+                        <div>
+                            <h4>How to improve</h4>
+                            @if (r.Improvements.Count == 0)
+                            {
+                                <p class="ok small"><Icon Name="check" Size="14" /> Nothing to improve — full marks.</p>
+                            }
+                            else
+                            {
+                                <ol class="improvements">
+                                    @foreach (var imp in r.Improvements)
+                                    {
+                                        <li>
+                                            <span class="pts">+@imp.PointsGained</span>
+                                            <span>@imp.Action
+                                                @if (AuditRatingService.WorstGrade(imp.ResultingGrade, r.Grade) != imp.ResultingGrade)
+                                                {
+                                                    <b style="color:@AuditRatingService.ColorForGrade(imp.ResultingGrade);"> → grade @imp.ResultingGrade</b>
+                                                }
+                                            </span>
+                                        </li>
+                                    }
+                                </ol>
+                            }
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4>Findings <span class="count">@areaFindings.Count</span></h4>
+                        @if (allAreaFindings.Count == 0)
+                        {
+                            <p class="ok small"><Icon Name="check" Size="14" /> No findings in this area.</p>
+                        }
+                        else if (areaFindings.Count == 0)
+                        {
+                            <p class="muted small"><Icon Name="info" Size="14" /> All @hidden finding@(hidden == 1 ? " is" : "s are") hidden by the severity filter.</p>
+                        }
+                        else
+                        {
+                            @foreach (var group in areaFindings.GroupBy(f => f.Severity).OrderBy(g => AuditRatingService.SeverityOrder(g.Key)))
+                            {
+                                <h4 class="sev-head"><span class="sev @group.Key.ToLowerInvariant()">@group.Key</span> <span class="muted">@SeverityHeading(group.Key) · @group.Count()</span></h4>
+                                <ul class="findings">
+                                    @foreach (var f in group)
+                                    {
+                                        var openFix = _openFixes.Contains(f.Key);
+                                        <li>
+                                            <div class="finding-main">
+                                                <span class="finding-cat">@f.Category <span class="chip effort">@f.Effort effort</span></span>
+                                                <span class="finding-msg">@f.Message</span>
+                                                <span class="muted small">@Flows.SubscriptionName(f.SubscriptionId)</span>
+                                            </div>
+                                            <span class="finding-actions">
+                                                <button class="link small" @onclick="() => ToggleFix(f.Key)">@(openFix ? "Hide fix" : "How to fix")</button>
+                                                @if (f.Script is not null)
+                                                {
+                                                    <button class="link small" @onclick="() => _fix.Open(f)"><Icon Name="terminal" Size="12" /> Script</button>
+                                                }
+                                            </span>
+                                            @if (openFix)
+                                            {
+                                                <div class="fix"><Icon Name="bolt" Size="14" /> @f.Fix</div>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        }
+                    </div>
+
+                    <div>
+                        <h4>Inventory</h4>
+                        <AreaInventory Area="r.Area" Scan="Scan" />
+                    </div>
+                </div>
+            }
+        </article>
+    }
+</section>
+
+<div class="actions end">
+    <a class="btn btn-primary" href="/audit/plan"><Icon Name="bolt" Size="16" /> Build the improvement plan <Icon Name="arrow" Size="16" /></a>
+</div>
+
+<ReportModal @ref="_report" />
+<FixScriptModal @ref="_fix" />
+
+@code {
+    private ReportModal _report = default!;
+    private FixScriptModal _fix = default!;
+    private bool _showLegend;
+    private readonly HashSet<AuditArea> _expanded = new();
+    private readonly HashSet<string> _openFixes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _openIssues = new(StringComparer.OrdinalIgnoreCase);
+    private void ToggleIssue(string key) { if (!_openIssues.Remove(key)) _openIssues.Add(key); }
+    private HashSet<AuditArea>? _auditing;
+    private string _progress = "";
+    private string? _auditError;
+
+    private AuditScanResult? Scan => Flows.State.Scan;
+
+    /// <summary>Audits more areas on demand and merges them into the current scan.</summary>
+    private async Task AuditAreasAsync(List<AuditArea> areas)
+    {
+        if (_auditing is not null || areas.Count == 0) return;
+        _auditing = new HashSet<AuditArea>(areas);
+        _auditError = null;
+        _progress = "Starting…";
+        StateHasChanged();
+        var progress = new Progress<string>(m => { _progress = m; _ = InvokeAsync(StateHasChanged); });
+        try
+        {
+            await Flows.ScanAsync(areas, progress);
+            foreach (var a in areas) _expanded.Add(a);
+        }
+        catch (Exception ex)
+        {
+            _auditError = ex.Message;
+        }
+        finally
+        {
+            _auditing = null;
+        }
+    }
+
+    private int High => Scan?.Findings.Count(f => f.Severity == "High") ?? 0;
+    private int Medium => Scan?.Findings.Count(f => f.Severity == "Medium") ?? 0;
+    private int Low => Scan?.Findings.Count(f => f.Severity == "Low") ?? 0;
+
+    protected override void OnInitialized()
+    {
+        // Open the weakest area by default so the first thing on screen is what to fix.
+        if (Scan is not null && _expanded.Count == 0 && AuditRatingService.Worst(Scan.Ratings) is { } worst)
+            _expanded.Add(worst.Area);
+    }
+
+    private void Toggle(AuditArea area) { if (!_expanded.Remove(area)) _expanded.Add(area); }
+    private void ToggleFix(string key) { if (!_openFixes.Remove(key)) _openFixes.Add(key); }
+
+    private static string SeverityHeading(string severity) => severity switch
+    {
+        "High" => "Fix first", "Medium" => "Fix soon", _ => "Worth doing"
+    };
+}

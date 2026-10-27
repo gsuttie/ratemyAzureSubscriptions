@@ -1,0 +1,76 @@
+@inject AuditFlowService Flows
+@inject IJSRuntime JS
+
+<Modal Visible="_visible" Title="@AuditReportService.Title(_kind)" Wide="true" OnClose="Close">
+    <ChildContent>
+        <div class="report-tabs">
+            <button class="tab @(_kind == ReportKind.Summary ? "active" : "")" @onclick="() => Switch(ReportKind.Summary)">Summary</button>
+            <button class="tab @(_kind == ReportKind.Findings ? "active" : "")" @onclick="() => Switch(ReportKind.Findings)">Detailed findings</button>
+            <button class="tab @(_kind == ReportKind.Plan ? "active" : "")" @onclick="() => Switch(ReportKind.Plan)">Improvement plan</button>
+        </div>
+        <div class="report-preview">@((MarkupString)_html)</div>
+    </ChildContent>
+    <Footer>
+        <span class="muted small">
+            Word document or Markdown (for a GitHub issue), generated from the same content as this preview.
+            @if (Flows.State.VisibleSeverities.Count < 3)
+            {
+                <br /><span class="warn">Severity filter applied: only @string.Join(", ", new[] { "High", "Medium", "Low" }.Where(Flows.State.VisibleSeverities.Contains)) findings are included.</span>
+            }
+        </span>
+        <span class="results-actions">
+            <button class="btn btn-ghost" @onclick="CopyMarkdownAsync" title="Copy this report as GitHub-flavoured Markdown">
+                <Icon Name="@(_copied ? "check" : "copy")" Size="16" /> @(_copied ? "Copied" : "Copy Markdown")
+            </button>
+            <button class="btn btn-primary" @onclick="DownloadAsync" disabled="@_downloading">
+                @if (_downloading) { <span class="spinner sm light"></span> } else { <Icon Name="doc" Size="16" /> }
+                Download .docx
+            </button>
+        </span>
+    </Footer>
+</Modal>
+
+@code {
+    private bool _visible;
+    private ReportKind _kind;
+    private bool _downloading;
+    private bool _copied;
+    private string _html = "";
+
+    public void Open(ReportKind kind)
+    {
+        _kind = kind;
+        _copied = false;
+        Render();
+        _visible = true;
+        StateHasChanged();
+    }
+
+    private void Switch(ReportKind kind) { _kind = kind; _copied = false; Render(); }
+
+    private async Task CopyMarkdownAsync()
+    {
+        var markdown = AuditReportService.Markdown(Flows.ReportContext(), _kind);
+        _copied = await JS.InvokeAsync<bool>("rmas.copy", markdown);
+    }
+
+    private void Render() => _html = AuditReportService.Html(Flows.ReportContext(), _kind);
+
+    private void Close() => _visible = false;
+
+    private async Task DownloadAsync()
+    {
+        _downloading = true;
+        try
+        {
+            var ctx = Flows.ReportContext();
+            var bytes = AuditReportService.Docx(ctx, _kind);
+            await JS.InvokeVoidAsync("rmas.download", AuditReportService.FileName(ctx, _kind), Convert.ToBase64String(bytes),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        }
+        finally
+        {
+            _downloading = false;
+        }
+    }
+}

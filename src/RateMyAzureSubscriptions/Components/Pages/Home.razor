@@ -1,0 +1,76 @@
+@page "/"
+@inject AuditFlowService Flows
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>RateMyAzureSubscriptions</PageTitle>
+
+<section class="hero">
+    <h1>How good are your Azure subscriptions?</h1>
+    <p class="lead">
+        RateMyAzureSubscriptions audits an Azure environment against Microsoft's best practices for security,
+        governance, performance, reliability and cost, and grades six areas from <b>A</b> to <b>F</b>, each on its own
+        100-point scale. Every finding comes with its fix, its effort and a prioritised place in the improvement plan.
+        Read-only, three steps.
+    </p>
+</section>
+
+<section class="flow-cards">
+    <a class="flow-card" href="/audit">
+        <div class="flow-card-icon"><Icon Name="cloudcheck" Size="30" /></div>
+        <h2>Audit your subscriptions</h2>
+        <p>Choose a tenant and the subscriptions to scan. The scan reads resources through Azure Resource Graph, ARM and Microsoft Graph, then rates each area and builds the improvement plan.</p>
+        <span class="btn btn-primary">Start the audit <Icon Name="arrow" Size="16" /></span>
+    </a>
+    <button class="flow-card flow-card-btn" @onclick="TryDemo">
+        <div class="flow-card-icon"><Icon Name="spark" Size="30" /></div>
+        <h2>No Azure access right now?</h2>
+        <p>Explore the whole flow on a realistic built-in estate: a well-run production subscription next to a neglected dev/test one, so every grade band appears. Nothing is sent to Azure.</p>
+        <span class="btn btn-ghost">Try with sample data <Icon Name="arrow" Size="16" /></span>
+    </button>
+</section>
+
+<section class="card">
+    <h2 class="card-title">What is scored</h2>
+    <p class="muted">Six areas, each scored out of 100 and graded independently, so a strong network cannot hide a weak identity setup.</p>
+    <div class="area-grid">
+        @foreach (var area in AuditAreaExtensions.All)
+        {
+            <div class="area-tile">
+                <div class="area-tile-icon"><Icon Name="@area.Icon()" Size="22" /></div>
+                <div>
+                    <b>@area.Label()</b>
+                    <div class="small muted">@area.Description()</div>
+                </div>
+            </div>
+        }
+    </div>
+    <div class="legend-grid mt">
+        @foreach (var (g, label, desc) in AuditRatingService.Legend)
+        {
+            <div class="legend-row" style="background:@(AuditRatingService.ColorForGrade(g))1A;">
+                <GradeBadge Grade="@g" Small="true" />
+                <div><b style="color:@AuditRatingService.ColorForGrade(g);">@label</b> <span class="muted">· @Band(g)</span><div class="small">@desc</div></div>
+            </div>
+        }
+    </div>
+    <p class="small muted caps">
+        <b>Caps:</b> management ports open to the Internet → Networking at most D · no MFA enforcement → Entra ID at most D ·
+        anonymous blob access → Storage at most C · no Defender plans → Security at most C · more than five subscription Owners → IAM at most C.
+        <a href="/model">See the full scoring model.</a>
+    </p>
+</section>
+
+@code {
+    private static string Band(string grade) => grade switch
+    {
+        "A" => "90–100", "B" => "75–89", "C" => "60–74", "D" => "45–59", "E" => "30–44", _ => "0–29"
+    };
+
+    private async Task TryDemo()
+    {
+        Flows.EnterDemoMode();
+        try { await JS.InvokeVoidAsync("rmas.setItem", "rmas.demo", "1"); } catch { }
+        Nav.NavigateTo("/audit");
+    }
+}

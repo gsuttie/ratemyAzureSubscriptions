@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RateMyAzureSubscriptions/RateMyAzureSubscriptions.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RateMyAzureSubscriptions.Tests/RateMyAzureSubscriptions.Tests.csproj" />
+  </Folder>
+</Solution>

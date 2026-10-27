@@ -1,0 +1,97 @@
+@inject AuditFlowService Flows
+
+@* What was assessed in one area, as compact tables. *@
+@switch (Area)
+{
+    case AuditArea.Compute:
+        @Table(["VM", "Size", "State", "Zone / set", "Backup", "Managed disks", "Subscription"],
+            Scan.VirtualMachines.OrderBy(v => v.Name).Select(v => new[] { v.Name, v.Size, Or(v.PowerState, "unknown"), YesNo(v.IsZonalOrInSet), Tri(v.IsBackedUp), YesNo(v.UsesManagedDisks), Sub(v.SubscriptionId) }), "No virtual machines.")
+        @Table(["App", "Type", "HTTPS only", "Min TLS", "FTP", "Identity", "Subscription"],
+            Scan.WebApps.OrderBy(a => a.Name).Select(a => new[] { a.Name, a.TypeLabel, YesNo(a.HttpsOnly), Or(a.MinTlsVersion, "default"), Or(a.FtpsState, "default"), YesNo(a.HasManagedIdentity), Sub(a.SubscriptionId) }), "No App Services.")
+        @Table(["Plan", "SKU", "Instances", "Apps", "Subscription"],
+            Scan.AppServicePlans.OrderBy(p => p.Name).Select(p => new[] { p.Name, p.SkuName, p.Capacity.ToString(), p.NumberOfSites.ToString(), Sub(p.SubscriptionId) }), "No App Service plans.")
+        break;
+    case AuditArea.Networking:
+        @Table(["Virtual network", "Address space", "Subnets (with NSG)", "DDoS", "Subscription"],
+            Scan.VirtualNetworks.OrderBy(v => v.Name).Select(v => new[] { v.Name, string.Join(", ", v.AddressSpaces), $"{v.Subnets.Count} ({v.Subnets.Count(x => x.NsgId is not null)})", YesNo(v.DdosProtectionEnabled), Sub(v.SubscriptionId) }), "No virtual networks.")
+        @Table(["NSG", "Rules", "Risky rules", "Associated", "Subscription"],
+            Scan.NetworkSecurityGroups.OrderBy(n => n.Name).Select(n => new[] { n.Name, n.Rules.Count.ToString(), n.RiskyRules.Count.ToString(), n.IsOrphaned ? "no" : $"{n.SubnetCount} subnet(s), {n.NicCount} NIC(s)", Sub(n.SubscriptionId) }), "No network security groups.")
+        @Table(["Public IP", "Address", "SKU", "Attached", "Subscription"],
+            Scan.PublicIps.OrderBy(p => p.Name).Select(p => new[] { p.Name, Or(p.IpAddress, "—"), p.Sku, YesNo(p.IsAttached), Sub(p.SubscriptionId) }), "No public IP addresses.")
+        break;
+    case AuditArea.Security:
+        @Table(["Subscription", "Defender plans on", "Secure score", "Contact", "Activity Log", "Policies"],
+            Scan.SubscriptionSecurity.Select(x => new[] { Sub(x.SubscriptionId), x.DefenderPlansReadable ? $"{x.EnabledPlanCount} of {x.DefenderPlans.Count}" : "unknown", x.SecureScorePercent is { } p ? $"{p:0}%" : "unknown", Tri(x.SecurityContactConfigured), x.ActivityLogExported == true ? string.Join(", ", x.ActivityLogDestinations) : Tri(x.ActivityLogExported), x.PolicyAssignmentCount.ToString() }), "No subscription data.")
+        @Table(["Key Vault", "Soft delete", "Purge protection", "Permission model", "Network", "Subscription"],
+            Scan.KeyVaults.OrderBy(k => k.Name).Select(k => new[] { k.Name, YesNo(k.SoftDeleteEnabled), YesNo(k.PurgeProtectionEnabled), k.RbacAuthorization ? "RBAC" : "access policies", k.PublicNetworkRestricted ? "restricted" : "all networks", Sub(k.SubscriptionId) }), "No Key Vaults.")
+        @Table(["SQL server", "Min TLS", "Public access", "Entra-only", "Subscription"],
+            Scan.SqlServers.OrderBy(q => q.Name).Select(q => new[] { q.Name, Or(q.MinimalTlsVersion, "default"), q.PublicNetworkRestricted ? "disabled" : "enabled", YesNo(q.EntraOnlyAuthentication), Sub(q.SubscriptionId) }), "No SQL servers.")
+        break;
+    case AuditArea.Storage:
+        @Table(["Account", "Kind / redundancy", "Public blob", "HTTPS / TLS", "Network", "Soft delete", "Lifecycle", "Subscription"],
+            Scan.StorageAccounts.OrderBy(a => a.Name).Select(a => new[] { a.Name, $"{a.Kind} / {a.RedundancyLabel}", a.AllowBlobPublicAccess == false ? "disallowed" : "allowed", $"{(a.SupportsHttpsTrafficOnly ? "HTTPS" : "HTTP ok")} / {Or(a.MinimumTlsVersion, "TLS1_0").Replace('_', '.')}", a.PublicNetworkRestricted ? "restricted" : "all networks", a.BlobSoftDeleteEnabled == true ? $"{a.BlobSoftDeleteDays} days" : Tri(a.BlobSoftDeleteEnabled), Tri(a.HasLifecyclePolicy), Sub(a.SubscriptionId) }), "No storage accounts.")
+        break;
+    case AuditArea.EntraId:
+        @if (!Scan.Entra.IsAssessable)
+        {
+            <p class="muted small">@Scan.Entra.NotReadReason</p>
+        }
+        else
+        {
+            <dl class="kv">
+                <dt>Tenant</dt><dd>@Scan.Entra.DisplayName <span class="muted">@Scan.Entra.DefaultDomain</span></dd>
+                <dt>Security defaults</dt><dd>@Tri(Scan.Entra.SecurityDefaultsEnabled, "enabled", "disabled")</dd>
+                <dt>Users / guests</dt><dd>@(Scan.Entra.UserCount?.ToString() ?? "?") / @(Scan.Entra.GuestCount?.ToString() ?? "?")</dd>
+                <dt>Global Administrators</dt><dd>@(Scan.Entra.RolesReadable ? $"{Scan.Entra.GlobalAdminCount}: {string.Join(", ", Scan.Entra.GlobalAdminNames)}" : "not read")</dd>
+                <dt>Guest invitations</dt><dd>@Or(Scan.Entra.AllowInvitesFrom, "not read")</dd>
+                <dt>Guest access</dt><dd>@(Scan.Entra.GuestAccessRestricted ? "restricted" : "same as members")</dd>
+                <dt>Users can register apps</dt><dd>@Tri(Scan.Entra.UsersCanRegisterApps)</dd>
+                <dt>User consent</dt><dd>@Tri(Scan.Entra.UserConsentAllowed, "allowed", "restricted")</dd>
+                @if (Scan.Entra.AuthMethodsReadable)
+                {
+                    <dt>Authentication methods</dt><dd>@string.Join(", ", Scan.Entra.AuthMethods.Where(m => m.Value).Select(m => m.Key))</dd>
+                }
+            </dl>
+            @Table(["Conditional Access policy", "State", "Summary"],
+                Scan.Entra.ConditionalAccessPolicies.Select(p => new[] { p.Name, p.State, p.Summary }), "No Conditional Access policies.")
+        }
+        break;
+    case AuditArea.Iam:
+        @Table(["Principal", "Type", "Role", "Scope", "Subscription"],
+            Scan.Iam.RoleAssignments.Where(a => a.IsPrivileged || a.IsOrphaned == true || a.IsGuest == true).OrderBy(a => a.RoleName).ThenBy(a => a.Display)
+                .Select(a => new[] { a.Display + (a.IsGuest == true ? " (guest)" : "") + (a.IsOrphaned == true ? " (deleted)" : ""), Or(a.PrincipalType, "unknown"), a.RoleName, a.ScopeLevel, Sub(a.SubscriptionId) }), "No privileged, orphaned or guest role assignments.")
+        @Table(["Custom role", "Actions", "Wildcard", "Subscription"],
+            Scan.Iam.CustomRoles.Select(c => new[] { c.Name, string.Join(", ", c.Actions.Take(4)) + (c.Actions.Count > 4 ? ", …" : ""), YesNo(c.HasWildcardActions), Sub(c.SubscriptionId) }), "No custom roles.")
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public AuditArea Area { get; set; }
+    [Parameter, EditorRequired] public AuditScanResult Scan { get; set; } = default!;
+
+    private string Sub(string id) => Flows.SubscriptionName(id);
+    private static string YesNo(bool b) => b ? "yes" : "no";
+    private static string Tri(bool? b, string yes = "yes", string no = "no") => b switch { true => yes, false => no, null => "unknown" };
+    private static string Or(string s, string fallback) => string.IsNullOrEmpty(s) ? fallback : s;
+
+    private RenderFragment Table(string[] headers, IEnumerable<string[]> rows, string empty) => __builder =>
+    {
+        var list = rows.ToList();
+        if (list.Count == 0)
+        {
+            <p class="muted small">@empty</p>
+            return;
+        }
+        <div class="table-wrap mt">
+            <table class="table inner">
+                <thead><tr>@foreach (var h in headers) { <th>@h</th> }</tr></thead>
+                <tbody>
+                    @foreach (var r in list)
+                    {
+                        <tr>@foreach (var c in r) { <td>@c</td> }</tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    };
+}

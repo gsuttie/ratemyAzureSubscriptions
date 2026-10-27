@@ -1,0 +1,98 @@
+@page "/model"
+
+<PageTitle>Scoring model · RateMyAzureSubscriptions</PageTitle>
+
+<div class="flow-header">
+    <div>
+        <h1><Icon Name="info" Size="26" /> Scoring model</h1>
+        <p class="muted">Each area is scored on its own 100-point scale from weighted categories, mapped to a letter, with hard caps so a good score cannot hide a critical gap.</p>
+    </div>
+</div>
+
+@foreach (var (area, cats, caps) in Model)
+{
+    <section class="card">
+        <h2 class="card-title"><Icon Name="@area.Icon()" Size="18" /> @area.Label()</h2>
+        <p class="muted small">@area.Description()</p>
+        <div class="weights">
+            @foreach (var (pts, name, desc) in cats)
+            {
+                <div class="weight"><span class="weight-pts">@pts</span><span class="weight-name">@name</span><span class="weight-desc">@desc</span></div>
+            }
+        </div>
+        <p class="small muted"><b>Caps:</b> @caps</p>
+    </section>
+}
+
+<section class="card">
+    <h2 class="card-title">Grade bands</h2>
+    <div class="legend-grid mt">
+        @foreach (var (g, label, desc) in AuditRatingService.Legend)
+        {
+            <div class="legend-row" style="background:@(AuditRatingService.ColorForGrade(g))1A;">
+                <GradeBadge Grade="@g" Small="true" />
+                <div><b style="color:@AuditRatingService.ColorForGrade(g);">@label</b> <span class="muted">· @Band(g)</span><div class="small">@desc</div></div>
+            </div>
+        }
+    </div>
+    <p class="small muted mt">The overall grade is the letter for the average of the assessed areas, never more than one band above the weakest area. Areas with nothing to assess (for example no storage accounts) are marked "not assessed" and excluded from the average.</p>
+</section>
+
+@code {
+    private static string Band(string grade) => grade switch
+    {
+        "A" => "90–100", "B" => "75–89", "C" => "60–74", "D" => "45–59", "E" => "30–44", _ => "0–29"
+    };
+
+    private static readonly (AuditArea Area, (int Pts, string Name, string Desc)[] Cats, string Caps)[] Model =
+    [
+        (AuditArea.Compute,
+        [
+            (25, "Availability & resilience", "VMs in zones or availability sets 15 · multi-instance App Service plans 10"),
+            (20, "Backup & recovery", "VMs protected by Azure Backup (pro-rated)"),
+            (25, "Configuration & security", "Managed disks 7 · boot diagnostics 5 · HTTPS only 5 · TLS 1.2 & no FTP 4 · managed identity 4"),
+            (15, "Performance & sizing", "Current-generation VM sizes 8 · plans with an SLA 4 · Always On 3"),
+            (15, "Cost optimisation", "No stopped-but-billed VMs 5 · no unattached disks 5 · no empty plans 3 · Hybrid Benefit 2"),
+        ], "unmanaged disks → at most B · no VM backed up → at most C"),
+        (AuditArea.Networking,
+        [
+            (25, "Segmentation & NSG coverage", "Workload subnets with an NSG (pro-rated)"),
+            (25, "Internet exposure", "No management ports from the Internet 10 · no VMs with public IPs 8 · PaaS public access restricted 7"),
+            (15, "Threat protection", "DDoS protection on Internet-facing VNets 8 · Azure Bastion 7"),
+            (15, "Network monitoring", "Network Watcher per region 8 · flow logs 7"),
+            (20, "Hygiene & cost", "No unattached public IPs 7 · no orphaned NSGs 6 · privatelink DNS zones 7"),
+        ], "management port open to the Internet → at most D · workload subnet without NSG → at most B"),
+        (AuditArea.Security,
+        [
+            (30, "Defender for Cloud", "Relevant plans enabled 20 · security contact 5 · secure score 5"),
+            (20, "Security posture", "Healthy share of Defender recommendations (pro-rated)"),
+            (15, "Policy & governance", "Microsoft cloud security benchmark assigned 8 · any policy assignments 7"),
+            (20, "Encryption & secrets", "Key Vault soft delete 5 · purge protection 5 · RBAC 4 · public access 3 · SQL TLS & Entra-only 3"),
+            (15, "Logging & monitoring", "Activity Log exported 9 · Log Analytics workspace 6"),
+        ], "no Defender plan enabled → at most C · Activity Log not exported → at most B"),
+        (AuditArea.Storage,
+        [
+            (30, "Access control", "No anonymous blob access 10 · HTTPS only 8 · TLS 1.2 7 · shared key off 5"),
+            (20, "Network security", "Public network restricted 12 · private endpoint 8"),
+            (25, "Data protection", "Blob soft delete 8 · container soft delete 5 · versioning 5 · ZRS/GRS 7"),
+            (15, "Lifecycle & cost", "Lifecycle policy 8 · StorageV2 7"),
+            (10, "Encryption & configuration", "Infrastructure encryption 4 · cross-tenant replication off 3 · Entra default auth 3"),
+        ], "anonymous blob access → at most C · HTTP or TLS below 1.2 → at most C"),
+        (AuditArea.EntraId,
+        [
+            (35, "Conditional Access & MFA", "MFA for all users 15 · MFA for admins 10 · legacy auth blocked 10 (security defaults count)"),
+            (20, "Privileged access", "2–5 Global Administrators 10 · no guests in privileged roles 10"),
+            (15, "External collaboration", "Guest invites restricted 8 · guest access restricted 7"),
+            (15, "User settings & app governance", "No user app registration 5 · no tenant creation 5 · user consent restricted 5"),
+            (15, "Authentication methods & risk", "Risk-based policies 6 · device compliance 5 · strong methods, no SMS/voice 4"),
+        ], "no MFA enforcement → at most D · legacy authentication not blocked → at most C"),
+        (AuditArea.Iam,
+        [
+            (30, "Least privilege", "≤3 subscription Owners 10 · privileged roles on groups not users 10 · no wildcard custom roles 10"),
+            (15, "Group-based access", "Share of people-facing assignments made to groups (pro-rated)"),
+            (25, "Workload identities", "No service principal Owners 8 · managed identities on compute 10 · credential hygiene 7"),
+            (15, "Assignment hygiene", "No orphaned assignments 8 · no guest assignments 7"),
+            (15, "Scope discipline", "No User Access Administrator on users 7 · non-privileged roles scoped below subscription 8"),
+        ], "more than five subscription Owners → at most C · wildcard custom role → at most B"),
+    ];
+}

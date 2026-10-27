@@ -1,0 +1,42 @@
+@inject AuditFlowService Flows
+
+@* Severity checkboxes shared by the Grades and Improvement plan steps; the choice lives in the session. *@
+<div class="sev-filter">
+    <span class="field-label">Show</span>
+    @foreach (var (sev, count) in Counts)
+    {
+        var on = State.VisibleSeverities.Contains(sev);
+        <label class="check sev-check">
+            <input type="checkbox" checked="@on" @onchange="() => Toggle(sev)" />
+            <span class="sev @sev.ToLowerInvariant()">@sev</span>
+            <span class="count">@count</span>
+        </label>
+    }
+    @if (State.VisibleSeverities.Count < 3)
+    {
+        <button class="link small" @onclick="ShowAll">Show all</button>
+    }
+</div>
+
+@code {
+    /// <summary>The findings the counts are taken from (all of them, before filtering).</summary>
+    [Parameter, EditorRequired] public IReadOnlyCollection<AuditFinding> Findings { get; set; } = [];
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private SessionState State => Flows.State;
+
+    private IEnumerable<(string Severity, int Count)> Counts =>
+        new[] { "High", "Medium", "Low" }.Select(s => (s, Findings.Count(f => f.Severity == s)));
+
+    private async Task Toggle(string severity)
+    {
+        State.ToggleSeverity(severity);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ShowAll()
+    {
+        State.VisibleSeverities.UnionWith(["High", "Medium", "Low"]);
+        await OnChanged.InvokeAsync();
+    }
+}
